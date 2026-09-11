@@ -1,11 +1,16 @@
-const CONTENT_FILES = ["content.css", "content.js"];
+const CONTENT_CSS = "content.css";
+const CONTENT_SCRIPTS = ["vendor/jsQR.js", "content.js"];
+const CONTENT_VERSION = "0.2.0";
 
 chrome.action.onClicked.addListener(async (tab) => {
   if (!tab.id) return;
 
   try {
     await ensureContentScript(tab.id);
-    await chrome.tabs.sendMessage(tab.id, { type: "QR_SCANNER_START" });
+    await chrome.tabs.sendMessage(tab.id, {
+      type: "QR_SCANNER_START_V2",
+      contentVersion: CONTENT_VERSION
+    });
   } catch (error) {
     console.warn("Unable to start QR scanner:", error);
     await chrome.action.setBadgeText({ tabId: tab.id, text: "ERR" });
@@ -30,16 +35,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function ensureContentScript(tabId) {
+  let ping = null;
+
   try {
-    await chrome.tabs.sendMessage(tabId, { type: "QR_SCANNER_PING" });
+    ping = await chrome.tabs.sendMessage(tabId, { type: "QR_SCANNER_PING" });
   } catch {
-    await chrome.scripting.insertCSS({
-      target: { tabId },
-      files: [CONTENT_FILES[0]]
-    });
+    // No content script is active yet.
+  }
+
+  if (ping?.contentVersion === CONTENT_VERSION && ping?.hasJsQr) {
+    return;
+  }
+
+  if (ping?.contentVersion === CONTENT_VERSION && !ping?.hasJsQr) {
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: [CONTENT_FILES[1]]
+      files: ["vendor/jsQR.js"]
     });
+    return;
   }
+
+  try {
+    await chrome.scripting.insertCSS({
+      target: { tabId },
+      files: [CONTENT_CSS]
+    });
+  } catch {
+    // CSS may already be present on pages where the old script was injected.
+  }
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: CONTENT_SCRIPTS
+  });
 }

@@ -1,8 +1,11 @@
 (() => {
-  if (window.__qrRegionScannerLoaded) {
+  const CONTENT_VERSION = "0.2.0";
+
+  if (window.__qrRegionScannerVersion === CONTENT_VERSION) {
     return;
   }
 
+  window.__qrRegionScannerVersion = CONTENT_VERSION;
   window.__qrRegionScannerLoaded = true;
   chrome.runtime.onMessage.addListener(handleMessage);
 
@@ -14,11 +17,15 @@
 
   function handleMessage(message, _sender, sendResponse) {
     if (message?.type === "QR_SCANNER_PING") {
-      sendResponse({ ok: true });
+      sendResponse({
+        ok: true,
+        contentVersion: CONTENT_VERSION,
+        hasJsQr: typeof self.jsQR === "function"
+      });
       return true;
     }
 
-    if (message?.type === "QR_SCANNER_START") {
+    if (message?.type === "QR_SCANNER_START_V2" && message?.contentVersion === CONTENT_VERSION) {
       startScanner();
       sendResponse({ ok: true });
       return true;
@@ -68,12 +75,16 @@
     const y1 = Math.min(startPoint.y, event.clientY);
     const x2 = Math.max(startPoint.x, event.clientX);
     const y2 = Math.max(startPoint.y, event.clientY);
+    const left = clamp(x1, 0, window.innerWidth);
+    const top = clamp(y1, 0, window.innerHeight);
+    const right = clamp(x2, 0, window.innerWidth);
+    const bottom = clamp(y2, 0, window.innerHeight);
 
     activeRect = {
-      left: clamp(x1, 0, window.innerWidth),
-      top: clamp(y1, 0, window.innerHeight),
-      width: clamp(x2, 0, window.innerWidth) - clamp(x1, 0, window.innerWidth),
-      height: clamp(y2, 0, window.innerHeight) - clamp(y1, 0, window.innerHeight)
+      left,
+      top,
+      width: right - left,
+      height: bottom - top
     };
 
     renderSelection(activeRect.left, activeRect.top, activeRect.width, activeRect.height);
@@ -138,13 +149,39 @@
   }
 
   async function decodeQr(canvas) {
-    if (!("BarcodeDetector" in window)) {
-      throw new Error("当前浏览器不支持 BarcodeDetector。请使用新版 Chrome 或 Edge，或后续接入本地 ZXing/jsQR 解码库。");
+    const nativeResult = await decodeWithBarcodeDetector(canvas);
+    if (nativeResult) return nativeResult;
+
+    const jsQrResult = decodeWithJsQr(canvas);
+    if (jsQrResult) return jsQrResult;
+
+    return "";
+  }
+
+  async function decodeWithBarcodeDetector(canvas) {
+    if (!("BarcodeDetector" in window)) return "";
+
+    try {
+      const detector = new BarcodeDetector({ formats: ["qr_code"] });
+      const detections = await detector.detect(canvas);
+      return detections?.[0]?.rawValue || "";
+    } catch {
+      return "";
+    }
+  }
+
+  function decodeWithJsQr(canvas) {
+    if (typeof self.jsQR !== "function") {
+      throw new Error("本地 jsQR 解码库未加载，请重新加载扩展后再试");
     }
 
-    const detector = new BarcodeDetector({ formats: ["qr_code"] });
-    const detections = await detector.detect(canvas);
-    return detections?.[0]?.rawValue || "";
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    const result = self.jsQR(imageData.data, imageData.width, imageData.height, {
+      inversionAttempts: "attemptBoth"
+    });
+
+    return result?.data || "";
   }
 
   function showResult(value, title) {

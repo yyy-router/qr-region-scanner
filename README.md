@@ -8,6 +8,7 @@
 - 不上传截图或网页内容
 - 点击插件图标后直接框选二维码区域
 - 识别成功后可复制结果或打开 `http/https` 链接
+- 内置本地 `jsQR` 解码库，兼容不支持 `BarcodeDetector` 的 Edge / Chrome 环境
 
 ## 安装
 
@@ -15,6 +16,8 @@
 2. 开启开发者模式。
 3. 选择“加载已解压的扩展程序”。
 4. 选择本目录。
+
+修改插件文件后，需要在扩展程序页面点击“重新加载”，再回到目标网页刷新页面后使用。
 
 ## 使用
 
@@ -28,13 +31,18 @@
 插件使用 Manifest V3：
 
 - `background.js` 负责注入脚本和调用 `chrome.tabs.captureVisibleTab()`。
-- `content.js` 负责框选、裁剪截图和调用浏览器本地 `BarcodeDetector` 解码。
+- `content.js` 负责框选、裁剪截图和本地二维码识别。
 - `content.css` 负责框选层和结果面板样式。
+- `vendor/jsQR.js` 是本地 vendored 的 `jsQR@1.4.0`，用于兼容 `BarcodeDetector` 不可用的浏览器。
 
-当前版本依赖浏览器内置的 `BarcodeDetector`。新版 Chrome / Edge 通常可用；如果目标浏览器不支持，可以在后续版本加入本地的 `ZXing` 或 `jsQR` 文件作为 fallback，仍然不需要服务端接口。
+识别流程是：优先尝试浏览器内置 `BarcodeDetector`，不可用或识别失败时自动使用本地 `jsQR`。整个过程都在浏览器本地完成，不需要服务端接口。
 
 ## 限制
 
 - 只能识别当前屏幕可见区域，二维码不在视口内时需要先滚动到可见位置。
 - 浏览器内置页面、扩展商店页面等特殊页面通常不能注入脚本或截图。
 - 二维码过小、模糊、遮挡或对比度过低时，识别率会下降。
+
+## 第三方许可
+
+本项目 vendored 了 `jsQR@1.4.0`，许可证见 `vendor/jsQR.LICENSE`。
