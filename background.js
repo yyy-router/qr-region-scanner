@@ -1,6 +1,6 @@
 const CONTENT_CSS = "content.css";
 const CONTENT_SCRIPTS = ["vendor/jsQR.js", "content.js"];
-const CONTENT_VERSION = "0.2.0";
+const CONTENT_VERSION = "0.3.0";
 
 chrome.action.onClicked.addListener(async (tab) => {
   if (!tab.id) return;
