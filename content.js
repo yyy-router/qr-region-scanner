@@ -1,5 +1,6 @@
 (() => {
-  const CONTENT_VERSION = "0.2.0";
+  const CONTENT_VERSION = "0.3.0";
+  const RESULT_AUTO_CLOSE_SECONDS = 10;
 
   if (window.__qrRegionScannerVersion === CONTENT_VERSION) {
     return;
@@ -14,6 +15,7 @@
   let tip = null;
   let startPoint = null;
   let activeRect = null;
+  let resultPanelTimer = null;
 
   function handleMessage(message, _sender, sendResponse) {
     if (message?.type === "QR_SCANNER_PING") {
@@ -192,15 +194,25 @@
 
     const header = document.createElement("div");
     header.className = "qr-scanner-panel-header";
-    header.textContent = title;
+
+    const heading = document.createElement("div");
+    heading.className = "qr-scanner-panel-heading";
+
+    const titleText = document.createElement("span");
+    titleText.textContent = title;
+
+    const countdown = document.createElement("span");
+    countdown.className = "qr-scanner-countdown";
+
+    heading.append(titleText, countdown);
 
     const close = document.createElement("button");
     close.className = "qr-scanner-panel-close";
     close.type = "button";
     close.title = "关闭";
     close.textContent = "x";
-    close.addEventListener("click", () => panel.remove());
-    header.appendChild(close);
+    close.addEventListener("click", removeResultPanel);
+    header.append(heading, close);
 
     const body = document.createElement("div");
     body.className = "qr-scanner-panel-body";
@@ -236,6 +248,7 @@
     body.append(result, actions);
     panel.append(header, body);
     document.documentElement.appendChild(panel);
+    startResultCountdown(panel, countdown);
   }
 
   function renderSelection(left, top, width, height) {
@@ -266,7 +279,37 @@
   }
 
   function removeResultPanel() {
+    clearResultPanelTimer();
     document.querySelector(".qr-scanner-panel")?.remove();
+  }
+
+  function startResultCountdown(panel, countdown) {
+    let secondsLeft = RESULT_AUTO_CLOSE_SECONDS;
+    renderResultCountdown(countdown, secondsLeft);
+
+    resultPanelTimer = window.setInterval(() => {
+      if (!panel.isConnected) {
+        clearResultPanelTimer();
+        return;
+      }
+
+      secondsLeft -= 1;
+      renderResultCountdown(countdown, secondsLeft);
+
+      if (secondsLeft <= 0) {
+        removeResultPanel();
+      }
+    }, 1000);
+  }
+
+  function renderResultCountdown(countdown, secondsLeft) {
+    countdown.textContent = `${secondsLeft}s 后自动关闭`;
+  }
+
+  function clearResultPanelTimer() {
+    if (!resultPanelTimer) return;
+    window.clearInterval(resultPanelTimer);
+    resultPanelTimer = null;
   }
 
   function loadImage(src) {
