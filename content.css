@@ -117,6 +117,16 @@
   user-select: text;
 }
 
+.qr-scanner-history {
+  padding: 8px 10px;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  color: #166534;
+  background: #f0fdf4;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .qr-scanner-actions {
   display: flex;
   justify-content: flex-end;
