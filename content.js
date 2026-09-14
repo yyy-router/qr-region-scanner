@@ -1,6 +1,8 @@
 (() => {
-  const CONTENT_VERSION = "0.3.0";
+  const CONTENT_VERSION = "0.4.0";
   const RESULT_AUTO_CLOSE_SECONDS = 10;
+  const HISTORY_STORAGE_KEY = "qrScannerHistory";
+  const HISTORY_LIMIT = 1000;
 
   if (window.__qrRegionScannerVersion === CONTENT_VERSION) {
     return;
@@ -123,7 +125,8 @@
 
       const canvas = await cropScreenshot(capture.dataUrl, rect);
       const result = await decodeQr(canvas);
-      showResult(result || "", result ? "识别成功" : "没有在所选区域识别到二维码");
+      const historyInfo = result ? await recordScanHistory(result) : null;
+      showResult(result || "", result ? "识别成功" : "没有在所选区域识别到二维码", historyInfo);
     } catch (error) {
       cleanup();
       showResult("", error?.message || "识别失败");
@@ -186,7 +189,79 @@
     return result?.data || "";
   }
 
-  function showResult(value, title) {
+  async function recordScanHistory(value) {
+    try {
+      const history = await getStoredHistory();
+      const now = Date.now();
+      const existingIndex = history.findIndex((record) => record.value === value);
+      let historyInfo = null;
+
+      if (existingIndex >= 0) {
+        const existing = history[existingIndex];
+        const updated = {
+          value,
+          firstSeenAt: existing.firstSeenAt || now,
+          lastSeenAt: now,
+          count: (existing.count || 1) + 1
+        };
+
+        history.splice(existingIndex, 1);
+        history.unshift(updated);
+        historyInfo = {
+          isRepeat: true,
+          previousLastSeenAt: existing.lastSeenAt || existing.firstSeenAt || now,
+          totalCount: updated.count,
+          limit: HISTORY_LIMIT
+        };
+      } else {
+        history.unshift({
+          value,
+          firstSeenAt: now,
+          lastSeenAt: now,
+          count: 1
+        });
+        historyInfo = {
+          isRepeat: false,
+          totalCount: 1,
+          limit: HISTORY_LIMIT
+        };
+      }
+
+      await setStoredHistory(history.slice(0, HISTORY_LIMIT));
+      return historyInfo;
+    } catch {
+      return { unavailable: true };
+    }
+  }
+
+  function getStoredHistory() {
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.get({ [HISTORY_STORAGE_KEY]: [] }, (items) => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+          return;
+        }
+
+        const history = Array.isArray(items[HISTORY_STORAGE_KEY]) ? items[HISTORY_STORAGE_KEY] : [];
+        resolve(history.filter((record) => record && typeof record.value === "string"));
+      });
+    });
+  }
+
+  function setStoredHistory(history) {
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [HISTORY_STORAGE_KEY]: history }, () => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  }
+
+  function showResult(value, title, historyInfo = null) {
     removeResultPanel();
 
     const panel = document.createElement("div");
@@ -221,6 +296,11 @@
     result.className = "qr-scanner-result";
     result.textContent = value || "请扩大框选区域，或确认二维码清晰可见。";
 
+    const history = document.createElement("div");
+    history.className = "qr-scanner-history";
+    history.textContent = formatHistoryMessage(historyInfo);
+    history.hidden = !value || !history.textContent;
+
     const actions = document.createElement("div");
     actions.className = "qr-scanner-actions";
 
@@ -245,10 +325,29 @@
     open.addEventListener("click", () => window.open(value, "_blank", "noopener,noreferrer"));
 
     actions.append(copy, open);
-    body.append(result, actions);
+    body.append(result, history, actions);
     panel.append(header, body);
     document.documentElement.appendChild(panel);
     startResultCountdown(panel, countdown);
+  }
+
+  function formatHistoryMessage(historyInfo) {
+    if (!historyInfo) return "";
+    if (historyInfo.unavailable) return "历史记录暂不可用，本次识别结果未保存";
+    if (!historyInfo.isRepeat) return `首次识别该内容，已保存到本地历史（最多 ${historyInfo.limit} 条）`;
+
+    return `已识别过，上次：${formatLocalDateTime(historyInfo.previousLastSeenAt)}，累计 ${historyInfo.totalCount} 次`;
+  }
+
+  function formatLocalDateTime(timestamp) {
+    return new Intl.DateTimeFormat("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).format(new Date(timestamp));
   }
 
   function renderSelection(left, top, width, height) {
