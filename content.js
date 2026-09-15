@@ -1,5 +1,5 @@
 (() => {
-  const CONTENT_VERSION = "0.4.0";
+  const CONTENT_VERSION = "0.5.0";
   const RESULT_AUTO_CLOSE_SECONDS = 10;
   const HISTORY_STORAGE_KEY = "qrScannerHistory";
   const HISTORY_LIMIT = 1000;
@@ -137,7 +137,7 @@
     const image = await loadImage(dataUrl);
     const scaleX = image.naturalWidth / window.innerWidth;
     const scaleY = image.naturalHeight / window.innerHeight;
-    const padding = 8;
+    const padding = 16;
 
     const sx = Math.max(0, Math.floor((rect.left - padding) * scaleX));
     const sy = Math.max(0, Math.floor((rect.top - padding) * scaleY));
@@ -159,6 +159,11 @@
 
     const jsQrResult = decodeWithJsQr(canvas);
     if (jsQrResult) return jsQrResult;
+
+    for (const variant of createDecodeVariants(canvas)) {
+      const variantResult = decodeWithJsQr(variant);
+      if (variantResult) return variantResult;
+    }
 
     return "";
   }
@@ -187,6 +192,141 @@
     });
 
     return result?.data || "";
+  }
+
+  function createDecodeVariants(canvas) {
+    const variants = [
+      createPaddedScaledCanvas(canvas, 2, 24),
+      createPaddedScaledCanvas(canvas, 3, 32),
+      createContrastCanvas(canvas, 2, 24),
+      createColorDistanceBinaryCanvas(canvas, 2, 24, 34),
+      createColorDistanceBinaryCanvas(canvas, 3, 32, 28),
+      createLumaThresholdCanvas(canvas, 2, 24, 238)
+    ];
+
+    return variants.filter(Boolean);
+  }
+
+  function createPaddedScaledCanvas(source, scale, quietZone) {
+    const target = document.createElement("canvas");
+    target.width = Math.max(1, Math.round(source.width * scale + quietZone * 2));
+    target.height = Math.max(1, Math.round(source.height * scale + quietZone * 2));
+
+    const context = target.getContext("2d", { willReadFrequently: true });
+    context.imageSmoothingEnabled = false;
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, target.width, target.height);
+    context.drawImage(source, quietZone, quietZone, source.width * scale, source.height * scale);
+    return target;
+  }
+
+  function createContrastCanvas(source, scale, quietZone) {
+    const target = createPaddedScaledCanvas(source, scale, quietZone);
+    const context = target.getContext("2d", { willReadFrequently: true });
+    const imageData = context.getImageData(0, 0, target.width, target.height);
+    const data = imageData.data;
+    let min = 255;
+    let max = 0;
+
+    for (let index = 0; index < data.length; index += 4) {
+      const luma = getLuma(data[index], data[index + 1], data[index + 2]);
+      min = Math.min(min, luma);
+      max = Math.max(max, luma);
+    }
+
+    const range = Math.max(1, max - min);
+    for (let index = 0; index < data.length; index += 4) {
+      const luma = Math.round(((getLuma(data[index], data[index + 1], data[index + 2]) - min) / range) * 255);
+      data[index] = luma;
+      data[index + 1] = luma;
+      data[index + 2] = luma;
+      data[index + 3] = 255;
+    }
+
+    context.putImageData(imageData, 0, 0);
+    return target;
+  }
+
+  function createColorDistanceBinaryCanvas(source, scale, quietZone, threshold) {
+    const target = createPaddedScaledCanvas(source, scale, quietZone);
+    const context = target.getContext("2d", { willReadFrequently: true });
+    const imageData = context.getImageData(0, 0, target.width, target.height);
+    const data = imageData.data;
+    const background = sampleBorderColor(imageData);
+
+    for (let index = 0; index < data.length; index += 4) {
+      const distance = getColorDistance(
+        data[index],
+        data[index + 1],
+        data[index + 2],
+        background.r,
+        background.g,
+        background.b
+      );
+      const value = distance > threshold ? 0 : 255;
+      data[index] = value;
+      data[index + 1] = value;
+      data[index + 2] = value;
+      data[index + 3] = 255;
+    }
+
+    context.putImageData(imageData, 0, 0);
+    return target;
+  }
+
+  function createLumaThresholdCanvas(source, scale, quietZone, threshold) {
+    const target = createPaddedScaledCanvas(source, scale, quietZone);
+    const context = target.getContext("2d", { willReadFrequently: true });
+    const imageData = context.getImageData(0, 0, target.width, target.height);
+    const data = imageData.data;
+
+    for (let index = 0; index < data.length; index += 4) {
+      const luma = getLuma(data[index], data[index + 1], data[index + 2]);
+      const value = luma < threshold ? 0 : 255;
+      data[index] = value;
+      data[index + 1] = value;
+      data[index + 2] = value;
+      data[index + 3] = 255;
+    }
+
+    context.putImageData(imageData, 0, 0);
+    return target;
+  }
+
+  function sampleBorderColor(imageData) {
+    const { width, height, data } = imageData;
+    let totalR = 0;
+    let totalG = 0;
+    let totalB = 0;
+    let count = 0;
+
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        if (x > 1 && y > 1 && x < width - 2 && y < height - 2) continue;
+        const index = (y * width + x) * 4;
+        totalR += data[index];
+        totalG += data[index + 1];
+        totalB += data[index + 2];
+        count += 1;
+      }
+    }
+
+    return {
+      r: Math.round(totalR / count) || 255,
+      g: Math.round(totalG / count) || 255,
+      b: Math.round(totalB / count) || 255
+    };
+  }
+
+  function getLuma(r, g, b) {
+    return 0.299 * r + 0.587 * g + 0.114 * b;
+  }
+
+  function getColorDistance(r1, g1, b1, r2, g2, b2) {
+    const r = r1 - r2;
+    const g = g1 - g2;
+    const b = b1 - b2;
+    return Math.sqrt(r * r + g * g + b * b);
   }
 
   async function recordScanHistory(value) {
