@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QR Region Scanner OCR 配置</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main class="options-shell">
+      <header class="options-header">
+        <h1>OCR 配置</h1>
+      </header>
+
+      <form id="ocr-options-form" class="options-form">
+        <label class="option-row option-row-inline">
+          <span>
+            <strong>启用在线 OCR</strong>
+            <small>开启后，后续 OCR 识别会把框选图片发送到配置的 OCR 服务。</small>
+          </span>
+          <input id="enable-cloud-ocr" type="checkbox">
+        </label>
+
+        <label class="option-row">
+          <span>
+            <strong>OCR 服务</strong>
+            <small>当前先预留 OCR.space 配置。</small>
+          </span>
+          <select id="ocr-provider">
+            <option value="ocr-space">OCR.space</option>
+          </select>
+        </label>
+
+        <label class="option-row">
+          <span>
+            <strong>API Key</strong>
+            <small>密钥只保存在本机浏览器扩展数据中，不会提交到仓库。</small>
+          </span>
+          <input id="ocr-api-key" type="password" autocomplete="off" spellcheck="false" placeholder="输入你的 OCR.space API Key">
+        </label>
+
+        <label class="option-row">
+          <span>
+            <strong>调用策略</strong>
+            <small>建议默认手动触发，避免浪费 OCR 额度。</small>
+          </span>
+          <select id="ocr-trigger-mode">
+            <option value="manual">手动触发</option>
+            <option value="wide-selection">横向长条自动 OCR</option>
+            <option value="qr-failed">二维码失败后提示 OCR</option>
+          </select>
+        </label>
+
+        <label class="option-row">
+          <span>
+            <strong>OCR Engine</strong>
+            <small>Engine 2 通常更快；Engine 3 可能更准但更慢。</small>
+          </span>
+          <select id="ocr-engine">
+            <option value="2">Engine 2</option>
+            <option value="3">Engine 3</option>
+          </select>
+        </label>
+
+        <label class="option-row">
+          <span>
+            <strong>语言</strong>
+            <small>URL 识别优先使用英文即可。</small>
+          </span>
+          <select id="ocr-language">
+            <option value="eng">English</option>
+            <option value="chs">简体中文</option>
+          </select>
+        </label>
+
+        <section class="notice">
+          <strong>隐私提示</strong>
+          <p>二维码识别仍然在本地完成。只有启用并触发在线 OCR 时，框选区域图片才会发送到你配置的 OCR 服务。</p>
+        </section>
+
+        <footer class="actions">
+          <button type="button" id="reset-options" class="button">恢复默认</button>
+          <button type="submit" class="button button-primary">保存配置</button>
+        </footer>
+
+        <p id="status-message" class="status-message" role="status" aria-live="polite"></p>
+      </form>
+    </main>
+
+    <script src="options.js"></script>
+  </body>
+</html>
