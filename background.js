@@ -1,6 +1,15 @@
 const CONTENT_CSS = "content.css";
 const CONTENT_SCRIPTS = ["vendor/jsQR.js", "content.js"];
 const CONTENT_VERSION = "0.5.0";
+const OCR_OPTIONS_MENU_ID = "open-ocr-options";
+
+chrome.runtime.onInstalled.addListener(() => {
+  createOcrOptionsMenu();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  createOcrOptionsMenu();
+});
 
 chrome.action.onClicked.addListener(async (tab) => {
   if (!tab.id) return;
@@ -16,6 +25,12 @@ chrome.action.onClicked.addListener(async (tab) => {
     await chrome.action.setBadgeText({ tabId: tab.id, text: "ERR" });
     await chrome.action.setBadgeBackgroundColor({ tabId: tab.id, color: "#B91C1C" });
     setTimeout(() => chrome.action.setBadgeText({ tabId: tab.id, text: "" }), 2500);
+  }
+});
+
+chrome.contextMenus.onClicked.addListener((info) => {
+  if (info.menuItemId === OCR_OPTIONS_MENU_ID) {
+    chrome.runtime.openOptionsPage();
   }
 });
 
@@ -67,5 +82,16 @@ async function ensureContentScript(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
     files: CONTENT_SCRIPTS
+  });
+}
+
+function createOcrOptionsMenu() {
+  chrome.contextMenus.remove(OCR_OPTIONS_MENU_ID, () => {
+    chrome.runtime.lastError;
+    chrome.contextMenus.create({
+      id: OCR_OPTIONS_MENU_ID,
+      title: "配置 OCR",
+      contexts: ["action"]
+    });
   });
 }
