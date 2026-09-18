@@ -1,8 +1,21 @@
 (() => {
-  const CONTENT_VERSION = "0.5.0";
+  const CONTENT_VERSION = "0.6.0";
   const RESULT_AUTO_CLOSE_SECONDS = 10;
   const HISTORY_STORAGE_KEY = "qrScannerHistory";
   const HISTORY_LIMIT = 1000;
+  const OCR_MAX_IMAGE_SIDE = 1800;
+  const OCR_MIN_IMAGE_HEIGHT = 180;
+  const OCR_MAX_UPSCALE = 3;
+  const OCR_OPTIONS_KEY = "qrScannerOcrOptions";
+  const DEFAULT_OCR_OPTIONS = {
+    enabled: false,
+    provider: "ocr-space",
+    apiKey: "",
+    triggerMode: "manual",
+    engine: "2",
+    language: "eng"
+  };
+  const OCR_URL_PATTERN = /\b(?:(?:https?:\/\/|https?:\/|www\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?::\d{2,5})?(?:\/[a-z0-9._~:/?#@!$&'()*+,;=%-]*)?/gi;
 
   if (window.__qrRegionScannerVersion === CONTENT_VERSION) {
     return;
@@ -126,7 +139,12 @@
       const canvas = await cropScreenshot(capture.dataUrl, rect);
       const result = await decodeQr(canvas);
       const historyInfo = result ? await recordScanHistory(result) : null;
-      showResult(result || "", result ? "识别成功" : "没有在所选区域识别到二维码", historyInfo);
+      const ocrOptions = await getOcrOptions();
+      showResult(result || "", result ? "识别成功" : "没有在所选区域识别到二维码", historyInfo, {
+        canvas,
+        options: ocrOptions,
+        autoRun: shouldAutoRunOcr(rect, result, ocrOptions)
+      });
     } catch (error) {
       cleanup();
       showResult("", error?.message || "识别失败");
@@ -401,8 +419,153 @@
     });
   }
 
-  function showResult(value, title, historyInfo = null) {
+  function getOcrOptions() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get({ [OCR_OPTIONS_KEY]: DEFAULT_OCR_OPTIONS }, (items) => {
+        if (chrome.runtime.lastError) {
+          resolve(DEFAULT_OCR_OPTIONS);
+          return;
+        }
+
+        resolve({ ...DEFAULT_OCR_OPTIONS, ...items[OCR_OPTIONS_KEY] });
+      });
+    });
+  }
+
+  function shouldAutoRunOcr(rect, qrResult, options) {
+    if (!options?.enabled || !options.apiKey) return false;
+    if (options.triggerMode !== "wide-selection") return false;
+    if (!rect?.height) return false;
+
+    const ratio = rect.width / rect.height;
+    return ratio >= 1.8 && !qrResult;
+  }
+
+  async function runCloudOcr(canvas, options) {
+    if (!options?.enabled) throw new Error("请先在 OCR 配置页启用在线 OCR");
+    if (!options.apiKey) throw new Error("请先在 OCR 配置页填写 API Key");
+
+    const base64Image = await createOcrImage(canvas);
+    const response = await chrome.runtime.sendMessage({
+      type: "QR_SCANNER_OCR_SPACE_PARSE",
+      payload: {
+        apiKey: options.apiKey,
+        base64Image,
+        engine: options.engine,
+        language: options.language
+      }
+    });
+
+    if (!response?.ok) {
+      throw new Error(response?.error || "OCR 请求失败");
+    }
+
+    return extractUrlsFromOcrText(response.result?.text || "");
+  }
+
+  async function createOcrImage(source) {
+    const maxScaleBySize = Math.min(OCR_MAX_UPSCALE, OCR_MAX_IMAGE_SIDE / Math.max(source.width, source.height));
+    const minHeightScale = Math.max(1, OCR_MIN_IMAGE_HEIGHT / Math.max(1, source.height));
+    const scale = Math.max(0.1, Math.min(maxScaleBySize, minHeightScale));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(source.width * scale));
+    canvas.height = Math.max(1, Math.round(source.height * scale));
+
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+    enhanceOcrImage(canvas);
+
+    for (const quality of [0.82, 0.72, 0.62, 0.52]) {
+      const dataUrl = canvas.toDataURL("image/jpeg", quality);
+      if (getDataUrlByteLength(dataUrl) <= 900 * 1024 || quality === 0.52) {
+        return dataUrl;
+      }
+    }
+
+    return canvas.toDataURL("image/jpeg", 0.52);
+  }
+
+  function enhanceOcrImage(canvas) {
+    const context = canvas.getContext("2d");
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+
+    for (let index = 0; index < data.length; index += 4) {
+      const gray = (data[index] * 0.299) + (data[index + 1] * 0.587) + (data[index + 2] * 0.114);
+      const contrasted = Math.max(0, Math.min(255, ((gray - 128) * 1.35) + 128));
+      data[index] = contrasted;
+      data[index + 1] = contrasted;
+      data[index + 2] = contrasted;
+    }
+
+    context.putImageData(imageData, 0, 0);
+  }
+
+  function getDataUrlByteLength(dataUrl) {
+    const commaIndex = dataUrl.indexOf(",");
+    const base64 = commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : dataUrl;
+    return Math.ceil((base64.length * 3) / 4);
+  }
+
+  function extractUrlsFromOcrText(text) {
+    const normalized = normalizeOcrText(text);
+    const matches = normalized.match(OCR_URL_PATTERN) || [];
+    const urls = matches.map(cleanOcrUrl).filter(Boolean);
+    return [...new Set(urls)];
+  }
+
+  function normalizeOcrText(text) {
+    return text
+      .replace(/[|｜]/g, "l")
+      .replace(/[\\]/g, "/")
+      .replace(/[：]/g, ":")
+      .replace(/[／]/g, "/")
+      .replace(/[．。]/g, ".")
+      .replace(/[％]/g, "%")
+      .replace(/\bhttps?\s*[:：]?\s*[\/／\\]\s*[\/／\\]/gi, (match) => match.toLowerCase().startsWith("https") ? "https://" : "http://")
+      .replace(/\bhttps?\s*[\/／\\]\s*/gi, (match) => match.toLowerCase().startsWith("https") ? "https://" : "http://")
+      .replace(/(?<=[A-Za-z0-9-])\s*\.\s*(?=[A-Za-z])/g, ".")
+      .replace(/\s+(?=[/?#&=._~%+-])/g, "")
+      .replace(/(?<=[A-Za-z0-9/?#&=._~%+-])\s+(?=[A-Za-z0-9/?#&=._~%+-])/g, "");
+  }
+
+  function cleanOcrUrl(value) {
+    const cleaned = value
+      .replace(/^[^a-z0-9]+/i, "")
+      .replace(/[),.;，。；]+$/g, "")
+      .replace(/^http:\//, "http://")
+      .replace(/^https:\//, "https://");
+    if (!cleaned) return "";
+    const normalized = /^https?:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`;
+
+    try {
+      const url = new URL(normalized);
+      if (!isLikelyDomain(url.hostname)) return "";
+      return url.href;
+    } catch {
+      return "";
+    }
+  }
+
+  function isLikelyDomain(hostname) {
+    const host = hostname.toLowerCase();
+    const labels = host.split(".");
+    if (labels.length < 2) return false;
+    if (host.length < 4 || host.length > 253) return false;
+    if (labels.some((label) => !label || label.length > 63)) return false;
+    if (!/^[a-z]{2,24}$/.test(labels[labels.length - 1])) return false;
+    if (!labels.every((label) => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label))) return false;
+    return true;
+  }
+
+  function showResult(value, title, historyInfo = null, ocrContext = null) {
     removeResultPanel();
+    let primaryValue = value;
+    let copyText = value;
 
     const panel = document.createElement("div");
     panel.className = "qr-scanner-panel";
@@ -436,6 +599,10 @@
     result.className = "qr-scanner-result";
     result.textContent = value || "请扩大框选区域，或确认二维码清晰可见。";
 
+    const ocrStatus = document.createElement("div");
+    ocrStatus.className = "qr-scanner-ocr-status";
+    ocrStatus.hidden = true;
+
     const history = document.createElement("div");
     history.className = "qr-scanner-history";
     history.textContent = formatHistoryMessage(historyInfo);
@@ -450,7 +617,7 @@
     copy.textContent = "复制";
     copy.disabled = !value;
     copy.addEventListener("click", async () => {
-      await navigator.clipboard.writeText(value);
+      await navigator.clipboard.writeText(copyText);
       copy.textContent = "已复制";
       setTimeout(() => {
         copy.textContent = "复制";
@@ -462,13 +629,58 @@
     open.type = "button";
     open.textContent = "打开链接";
     open.disabled = !isHttpUrl(value);
-    open.addEventListener("click", () => window.open(value, "_blank", "noopener,noreferrer"));
+    open.addEventListener("click", () => window.open(primaryValue, "_blank", "noopener,noreferrer"));
 
-    actions.append(copy, open);
-    body.append(result, history, actions);
+    const ocr = document.createElement("button");
+    ocr.className = "qr-scanner-button";
+    ocr.type = "button";
+    ocr.textContent = "在线 OCR";
+    ocr.hidden = !ocrContext?.options?.enabled;
+    ocr.disabled = !ocrContext?.options?.apiKey;
+    ocr.title = ocr.disabled && ocrContext?.options?.enabled ? "请先在 OCR 配置页填写 API Key" : "上传框选区域并识别图片文字中的链接";
+    ocr.addEventListener("click", async () => {
+      clearResultPanelTimer();
+      countdown.textContent = "OCR 识别中...";
+      ocr.disabled = true;
+      ocrStatus.hidden = false;
+      ocrStatus.textContent = "正在调用在线 OCR...";
+      ocrStatus.classList.remove("qr-scanner-ocr-status-error");
+
+      try {
+        const urls = await runCloudOcr(ocrContext.canvas, ocrContext.options);
+        if (!urls.length) {
+          ocrStatus.textContent = "OCR 已完成，但没有提取到链接";
+          return;
+        }
+
+        const ocrText = `OCR 链接：\n${urls.join("\n")}`;
+        result.textContent = value ? `${value}\n\n${ocrText}` : ocrText;
+        primaryValue = isHttpUrl(value) ? value : urls[0];
+        copyText = value ? `${value}\n${urls.join("\n")}` : urls.join("\n");
+        const ocrHistoryInfo = await recordScanHistory(primaryValue);
+        history.textContent = formatHistoryMessage(ocrHistoryInfo);
+        history.hidden = false;
+        copy.disabled = false;
+        open.disabled = !isHttpUrl(primaryValue);
+        ocrStatus.textContent = `OCR 已识别 ${urls.length} 个链接`;
+      } catch (error) {
+        ocrStatus.textContent = error?.message || "在线 OCR 失败";
+        ocrStatus.classList.add("qr-scanner-ocr-status-error");
+        ocr.disabled = false;
+      } finally {
+        startResultCountdown(panel, countdown);
+      }
+    });
+
+    actions.append(ocr, copy, open);
+    body.append(result, ocrStatus, history, actions);
     panel.append(header, body);
     document.documentElement.appendChild(panel);
     startResultCountdown(panel, countdown);
+
+    if (ocrContext?.autoRun && !ocr.disabled) {
+      window.setTimeout(() => ocr.click(), 0);
+    }
   }
 
   function formatHistoryMessage(historyInfo) {
