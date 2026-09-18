@@ -127,6 +127,22 @@
   line-height: 1.45;
 }
 
+.qr-scanner-ocr-status {
+  padding: 8px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  color: #1d4ed8;
+  background: #eff6ff;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.qr-scanner-ocr-status-error {
+  border-color: #fecaca;
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
 .qr-scanner-actions {
   display: flex;
   justify-content: flex-end;
