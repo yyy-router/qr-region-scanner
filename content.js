@@ -528,9 +528,7 @@
       .replace(/[％]/g, "%")
       .replace(/\bhttps?\s*[:：]?\s*[\/／\\]\s*[\/／\\]/gi, (match) => match.toLowerCase().startsWith("https") ? "https://" : "http://")
       .replace(/\bhttps?\s*[\/／\\]\s*/gi, (match) => match.toLowerCase().startsWith("https") ? "https://" : "http://")
-      .replace(/(?<=[A-Za-z0-9-])\s*\.\s*(?=[A-Za-z])/g, ".")
-      .replace(/\s+(?=[/?#&=._~%+-])/g, "")
-      .replace(/(?<=[A-Za-z0-9/?#&=._~%+-])\s+(?=[A-Za-z0-9/?#&=._~%+-])/g, "");
+      .replace(/(?<=[A-Za-z0-9-])\s*\.\s*(?=[A-Za-z])/g, ".");
   }
 
   function cleanOcrUrl(value) {
@@ -657,9 +655,12 @@
         result.textContent = value ? `${value}\n\n${ocrText}` : ocrText;
         primaryValue = isHttpUrl(value) ? value : urls[0];
         copyText = value ? `${value}\n${urls.join("\n")}` : urls.join("\n");
-        const ocrHistoryInfo = await recordScanHistory(primaryValue);
-        history.textContent = formatHistoryMessage(ocrHistoryInfo);
-        history.hidden = false;
+        const ocrHistoryValue = urls.find((url) => !isSameRecognizedValue(url, value));
+        if (ocrHistoryValue) {
+          const ocrHistoryInfo = await recordScanHistory(ocrHistoryValue);
+          history.textContent = formatHistoryMessage(ocrHistoryInfo);
+          history.hidden = false;
+        }
         copy.disabled = false;
         open.disabled = !isHttpUrl(primaryValue);
         ocrStatus.textContent = `OCR 已识别 ${urls.length} 个链接`;
@@ -780,6 +781,19 @@
     try {
       const url = new URL(value);
       return url.protocol === "http:" || url.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
+
+  function isSameRecognizedValue(left, right) {
+    if (left === right) return true;
+    if (!left || !right) return false;
+
+    try {
+      const leftUrl = new URL(left);
+      const rightUrl = new URL(right);
+      return leftUrl.href === rightUrl.href;
     } catch {
       return false;
     }
